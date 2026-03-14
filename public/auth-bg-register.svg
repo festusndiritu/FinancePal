@@ -1,0 +1,23 @@
+<svg width="1200" height="1200" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="1200" y2="1200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22C55E" />
+      <stop offset="0.5" stop-color="#14B8A6" />
+      <stop offset="1" stop-color="#0EA5E9" />
+    </linearGradient>
+    <linearGradient id="shapeGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.35" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="1200" fill="url(#bgGradient)" />
+
+  <path d="M0 720C260 630 450 780 660 740C870 700 940 520 1200 460V1200H0V720Z" fill="url(#shapeGradient)" />
+  <path d="M0 520C210 420 330 610 520 590C710 570 820 390 1060 330V1200H0V520Z" fill="white" opacity="0.08" />
+  <path d="M0 340C140 280 260 420 410 410C560 400 670 240 900 210V1200H0V340Z" fill="white" opacity="0.06" />
+
+  <circle cx="320" cy="260" r="120" fill="white" opacity="0.12" />
+  <circle cx="860" cy="180" r="90" fill="white" opacity="0.1" />
+  <circle cx="720" cy="660" r="150" fill="white" opacity="0.08" />
+</svg>
