@@ -6,13 +6,14 @@ import { groq, groqModel } from "@/lib/groq";
 import ChatMessage from "@/models/ChatMessage";
 import Expense from "@/models/Expense";
 import Budget from "@/models/Budget";
+import SavingsGoal from "@/models/SavingsGoal";
 import { expenseCategories } from "@/types";
 import { startOfMonth, endOfMonth, startOfDay, endOfDay, format } from "date-fns";
 
-// ── Zod schemas ────────────────────────────────────────────────────────────────
+// ── Zod schemas ───────────────────────────────────────────────────────────────
 
 const messageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
+  role:    z.enum(["user", "assistant"]),
   content: z.string().min(1).max(4000),
 });
 
@@ -20,62 +21,72 @@ const payloadSchema = z.object({
   messages: z.array(messageSchema).min(1).max(20),
 });
 
-// Schema for the full JSON response we require from the model
 const modelResponseSchema = z.object({
-  intent: z.enum(["log", "query"]),
+  intent: z.enum([
+    "log_expense", "edit_expense",
+    "log_budget",  "edit_budget",
+    "log_savings", "edit_savings",
+    "query",
+  ]),
   reply: z.string().min(1),
-  expenses: z
-    .array(
-      z.object({
-        amount: z.number().positive(),
-        category: z.enum(expenseCategories),
-        description: z.string().min(1).max(200),
-        date: z.string().optional(),
-      }),
-    )
-    .default([]),
-  budgets: z
-    .array(
-      z.object({
-        category: z.enum(expenseCategories),
-        limit: z.number().positive(),
-        period: z.enum(["monthly", "weekly"]).default("monthly"),
-        month: z.number().int().min(1).max(12).optional(),
-        year: z.number().int().min(2000).max(2100).optional(),
-      }),
-    )
-    .default([]),
+
+  expense: z.object({
+    amount:      z.number().positive(),
+    category:    z.enum(expenseCategories),
+    description: z.string().min(1).max(200),
+    date:        z.string().optional(),
+  }).nullable().default(null),
+
+  expenseEdit: z.object({
+    matchDescription: z.string(),
+    amount:           z.number().positive().optional(),
+    category:         z.enum(expenseCategories).optional(),
+    description:      z.string().optional(),
+  }).nullable().default(null),
+
+  budget: z.object({
+    category: z.enum(expenseCategories),
+    limit:    z.number().positive(),
+    period:   z.enum(["monthly", "weekly"]).default("monthly"),
+    month:    z.number().int().min(1).max(12).optional(),
+    year:     z.number().int().min(2000).max(2100).optional(),
+  }).nullable().default(null),
+
+  budgetEdit: z.object({
+    category: z.enum(expenseCategories),
+    limit:    z.number().positive(),
+  }).nullable().default(null),
+
+  savingsGoal: z.object({
+    name:          z.string().min(1).max(100),
+    targetAmount:  z.number().positive(),
+    currentAmount: z.number().min(0).default(0),
+    deadline:      z.string(),
+  }).nullable().default(null),
+
+  savingsEdit: z.object({
+    matchName:      z.string(),
+    // positive = deposit, negative = withdrawal
+    // Use depositAmount for adding money, withdrawAmount for taking money out
+    depositAmount:  z.number().positive().optional(),
+    withdrawAmount: z.number().positive().optional(),
+    targetAmount:   z.number().positive().optional(),
+    deadline:       z.string().optional(),
+  }).nullable().default(null),
 });
 
-// ── Budget helpers (unchanged) ────────────────────────────────────────────────
+type ModelResponse = z.infer<typeof modelResponseSchema>;
 
-function normalizeBudget(
-  budget: z.infer<typeof modelResponseSchema>["budgets"][number],
-) {
-  const now = new Date();
-  return {
-    category: budget.category,
-    limit:    budget.limit,
-    period:   budget.period,
-    month:    budget.month ?? now.getMonth() + 1,
-    year:     budget.year  ?? now.getFullYear(),
-  };
-}
-
-// ── GET ────────────────────────────────────────────────────────────────────────
+// ── GET ───────────────────────────────────────────────────────────────────────
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   await dbConnect();
 
   const messages = await ChatMessage.find({ userId: session.user.id })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean();
+    .sort({ createdAt: -1 }).limit(50).lean();
 
   return NextResponse.json({
     data: messages.reverse().map((m) => ({
@@ -87,13 +98,11 @@ export async function GET() {
   });
 }
 
-// ── POST ───────────────────────────────────────────────────────────────────────
+// ── POST ──────────────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
   const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const json   = await request.json();
   const parsed = payloadSchema.safeParse(json);
@@ -106,28 +115,19 @@ export async function POST(request: Request) {
 
   await dbConnect();
 
-  // ── Fetch context ────────────────────────────────────────────────────────
   const now        = new Date();
   const monthStart = startOfMonth(now);
   const monthEnd   = endOfMonth(now);
   const dayStart   = startOfDay(now);
   const dayEnd     = endOfDay(now);
 
-  const [monthlyExpenses, budgets] = await Promise.all([
-    Expense.find({
-      userId: session.user.id,
-      date: { $gte: monthStart, $lte: monthEnd },
-    })
-      .sort({ date: -1 })
-      .lean(),
-    Budget.find({
-      userId: session.user.id,
-      month: now.getMonth() + 1,
-      year:  now.getFullYear(),
-    }).lean(),
+  const [monthlyExpenses, budgets, savingsGoals] = await Promise.all([
+    Expense.find({ userId: session.user.id, date: { $gte: monthStart, $lte: monthEnd } })
+      .sort({ date: -1 }).lean(),
+    Budget.find({ userId: session.user.id, month: now.getMonth() + 1, year: now.getFullYear() }).lean(),
+    SavingsGoal.find({ userId: session.user.id }).sort({ deadline: 1 }).lean(),
   ]);
 
-  // Pre-compute totals — model must use these, never recalculate
   const totalMonth = monthlyExpenses.reduce((s, e) => s + e.amount, 0);
   const totalToday = monthlyExpenses
     .filter((e) => e.date >= dayStart && e.date <= dayEnd)
@@ -138,94 +138,95 @@ export async function POST(request: Request) {
     return acc;
   }, {});
 
-  const todayByCategory = monthlyExpenses
-    .filter((e) => e.date >= dayStart && e.date <= dayEnd)
-    .reduce<Record<string, number>>((acc, e) => {
-      acc[e.category] = (acc[e.category] ?? 0) + e.amount;
-      return acc;
-    }, {});
-
-  const categoryTotalsMonth = Object.entries(byCategory)
+  const categoryLines = Object.entries(byCategory)
     .map(([cat, amt]) => `  ${cat}: KES ${amt.toLocaleString()}`)
     .join("\n") || "  (none)";
 
-  const categoryTotalsToday = Object.entries(todayByCategory)
-    .map(([cat, amt]) => `  ${cat}: KES ${amt.toLocaleString()}`)
+  const budgetLines = budgets.length > 0
+    ? budgets.map((b) => {
+        const spent = byCategory[b.category] ?? 0;
+        const left  = b.limit - spent;
+        return `  [${b._id}] ${b.category}: KES ${spent.toLocaleString()} spent / KES ${b.limit.toLocaleString()} limit — KES ${left.toLocaleString()} left`;
+      }).join("\n")
+    : "  (none)";
+
+  const savingsLines = savingsGoals.length > 0
+    ? savingsGoals.map((g) => {
+        const pct = g.targetAmount > 0 ? ((g.currentAmount / g.targetAmount) * 100).toFixed(0) : "0";
+        return `  [${g._id}] ${g.name}: KES ${g.currentAmount.toLocaleString()} / KES ${g.targetAmount.toLocaleString()} (${pct}%) — deadline: ${format(new Date(g.deadline), "MMM d, yyyy")}`;
+      }).join("\n")
+    : "  (none)";
+
+  const recentExpenseLines = monthlyExpenses.slice(0, 12)
+    .map((e) => `  [${e._id}] ${format(new Date(e.date), "MMM d")} | ${e.category} | KES ${e.amount} | ${e.description}`)
     .join("\n") || "  (none)";
 
-  const budgetLines =
-    budgets.length > 0
-      ? budgets
-          .map((b) => {
-            const spent = byCategory[b.category] ?? 0;
-            const left  = b.limit - spent;
-            return `  ${b.category}: KES ${spent.toLocaleString()} spent / KES ${b.limit.toLocaleString()} limit (KES ${left.toLocaleString()} left)`;
-          })
-          .join("\n")
-      : "  (none)";
-
-  const recentLines = monthlyExpenses
-    .slice(0, 10)
-    .map(
-      (e) =>
-        `  ${format(new Date(e.date), "MMM d")} | ${e.category} | KES ${e.amount} | ${e.description}`,
-    )
-    .join("\n") || "  (none)";
-
-  // ── System prompt (JSON mode) ─────────────────────────────────────────────
   const systemPrompt = `You are FinancePal, a friendly personal finance assistant for a Kenyan user.
-Currency is KES. Today is ${format(now, "EEEE, MMMM d, yyyy")}.
-Allowed expense categories: ${expenseCategories.join(", ")}.
+Currency: KES. Today: ${format(now, "EEEE, MMMM d, yyyy")}.
+Categories: ${expenseCategories.join(", ")}.
 
-You MUST respond with a single JSON object — no prose outside it. Schema:
+Respond ONLY with a valid JSON object matching this exact schema:
 {
-  "intent": "log" | "query",
-  "reply": "your friendly natural-language response here",
-  "expenses": [ { "amount": number, "category": string, "description": string, "date": "YYYY-MM-DD" } ],
-  "budgets":  [ { "category": string, "limit": number, "period": "monthly"|"weekly" } ]
+  "intent": one of: log_expense | edit_expense | log_budget | edit_budget | log_savings | edit_savings | query,
+  "reply": "1-2 sentence natural language confirmation or answer",
+  "expense": { amount, category, description, date } or null,
+  "expenseEdit": { matchDescription, amount?, category?, description? } or null,
+  "budget": { category, limit, period, month?, year? } or null,
+  "budgetEdit": { category, limit } or null,
+  "savingsGoal": { name, targetAmount, currentAmount, deadline } or null,
+  "savingsEdit": { matchName, depositAmount?, withdrawAmount?, targetAmount?, deadline? } or null
 }
 
-INTENT RULES — choose carefully:
+INTENT GUIDE — pick the single best intent, fill the matching field, all others null:
 
-"log" → user is telling you about something NEW they just spent or a budget they want to set/change.
-  Examples: "spent 200 on fare", "just bought lunch for 450 at Java", "set food budget to 5000"
-  → Populate the expenses or budgets array accordingly.
-  → "reply" must confirm exactly what was logged.
+log_expense   → new expense → fill "expense"
+edit_expense  → change an existing expense → fill "expenseEdit"
+log_budget    → create a budget → fill "budget"
+edit_budget   → change a budget limit → fill "budgetEdit"
+log_savings   → create a savings goal → fill "savingsGoal"
+edit_savings  → deposit TO or withdraw FROM a goal, or update goal details → fill "savingsEdit"
+query         → question about data → all action fields null
 
-"query" → user is asking a question about existing data.
-  Examples: "how much on food?", "what's my budget?", "show expenses"
-  → expenses and budgets arrays MUST be empty [].
-  → "reply" must use ONLY the pre-computed figures below. Do NOT recalculate.
+SAVINGS EDIT RULES (very important):
+- "deposit / add / save / put in" → use depositAmount (positive)
+- "withdraw / take out / take from / reduce by / use from / pull from" → use withdrawAmount (positive number representing the amount taken out)
+- Never use negative numbers. depositAmount and withdrawAmount are always positive.
+- matchName: keyword from the goal name (e.g. "emergency" for "emergency fund")
 
-When in doubt, default to "query" with empty arrays.
+COMBINED ACTIONS: If the user says "take 300 from emergency fund for supper", that is TWO actions:
+  1. edit_savings with withdrawAmount: 300 from emergency fund
+  2. log_expense with amount: 300, description: "supper", category: "food"
+  In this case, pick the PRIMARY intent as "edit_savings" and also fill in "expense" (the secondary action).
+  Both fields can be non-null simultaneously only in this combined scenario.
 
-IMPORTANT: The "reply" field is shown directly to the user. Write clean natural prose — no JSON, no arrays, no raw numbers except as part of a sentence.
+RULES:
+- reply MUST be complete (1-2 sentences). Never truncate.
+- Never put JSON or "breakdown:" in reply.
+- For edit_budget: only fill "budgetEdit", system handles finding the existing budget.
+- Default to query if unsure.
 
-═══════════════════════════════════════
-FINANCIAL CONTEXT — USE THESE EXACT FIGURES, DO NOT RECALCULATE
-═══════════════════════════════════════
-This month (${format(now, "MMMM yyyy")}):
-  Total: KES ${totalMonth.toLocaleString()}
-  By category:
-${categoryTotalsMonth}
+══════════════════════════════
+CONTEXT (read-only)
+══════════════════════════════
+This month (${format(now, "MMMM yyyy")}): KES ${totalMonth.toLocaleString()} total
+Today: KES ${totalToday.toLocaleString()}
+By category:
+${categoryLines}
 
-Today (${format(now, "MMMM d")}):
-  Total: KES ${totalToday.toLocaleString()}
-  By category:
-${categoryTotalsToday}
-
-Budgets this month:
+Budgets:
 ${budgetLines}
 
-Recent expenses (last 10 — READ ONLY, do NOT put these in expenses array):
-${recentLines}
+Savings goals:
+${savingsLines}
+
+Recent expenses (READ ONLY — never re-log):
+${recentExpenseLines}
 `;
 
-  // ── Call Groq with JSON mode ───────────────────────────────────────────────
   const completion = await groq.chat.completions.create({
     model:           groqModel,
-    temperature:     0.2,
-    max_tokens:      1024,
+    temperature:     0.1,
+    max_tokens:      2048,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: systemPrompt },
@@ -235,70 +236,121 @@ ${recentLines}
 
   const rawContent = completion.choices[0]?.message?.content?.trim() ?? "{}";
 
-  // Parse and validate model response
-  let modelResponse: z.infer<typeof modelResponseSchema>;
+  let mr: ModelResponse;
   try {
-    const rawParsed = JSON.parse(rawContent) as unknown;
-    const validated = modelResponseSchema.safeParse(rawParsed);
-    if (validated.success) {
-      modelResponse = validated.data;
+    const v = modelResponseSchema.safeParse(JSON.parse(rawContent));
+    if (v.success) {
+      mr = v.data;
     } else {
-      // Fallback: pull reply text if present, empty arrays
-      const fallback = rawParsed as Record<string, unknown>;
-      modelResponse = {
-        intent:   "query",
-        reply:    typeof fallback.reply === "string" ? fallback.reply : "Sorry, I couldn't process that. Please try again.",
-        expenses: [],
-        budgets:  [],
+      console.error("Model response validation failed:", v.error.flatten());
+      mr = {
+        intent: "query", reply: "Sorry, I had trouble with that. Please try again.",
+        expense: null, expenseEdit: null, budget: null, budgetEdit: null,
+        savingsGoal: null, savingsEdit: null,
       };
     }
   } catch {
-    modelResponse = {
-      intent:   "query",
-      reply:    "Sorry, something went wrong. Please try again.",
-      expenses: [],
-      budgets:  [],
+    mr = {
+      intent: "query", reply: "Sorry, something went wrong.",
+      expense: null, expenseEdit: null, budget: null, budgetEdit: null,
+      savingsGoal: null, savingsEdit: null,
     };
   }
 
-  // Double-safety: if intent is query, discard any arrays the model returned anyway
-  const finalExpenses = modelResponse.intent === "log" ? modelResponse.expenses : [];
-  const finalBudgets  = modelResponse.intent === "log" ? modelResponse.budgets  : [];
-  const cleanReply    = modelResponse.reply;
+  // ── Build extracted payloads ──────────────────────────────────────────────
+
+  // Expense — can come from log_expense OR as secondary in a combined savings withdrawal
+  let extractedExpense: object | null = null;
+  if (mr.expense && (mr.intent === "log_expense" || mr.intent === "edit_savings")) {
+    extractedExpense = {
+      amount:      mr.expense.amount,
+      category:    mr.expense.category,
+      description: mr.expense.description,
+      date:        mr.expense.date ? new Date(mr.expense.date).toISOString() : new Date().toISOString(),
+    };
+  }
+
+  // Expense edit
+  let extractedEdit: object | null = null;
+  if (mr.intent === "edit_expense" && mr.expenseEdit) {
+    const keyword = mr.expenseEdit.matchDescription.toLowerCase();
+    const match   = monthlyExpenses.find((e) => e.description.toLowerCase().includes(keyword));
+    if (match) {
+      extractedEdit = {
+        expenseId:   match._id.toString(),
+        amount:      mr.expenseEdit.amount,
+        category:    mr.expenseEdit.category,
+        description: mr.expenseEdit.description,
+      };
+    }
+  }
+
+  // Budget (create or edit)
+  let extractedBudget: object | null = null;
+  if (mr.intent === "log_budget" || mr.intent === "edit_budget") {
+    const category = mr.budget?.category ?? mr.budgetEdit?.category;
+    const limit    = mr.budget?.limit    ?? mr.budgetEdit?.limit;
+    if (category && limit) {
+      extractedBudget = {
+        category,
+        limit,
+        period: mr.budget?.period ?? "monthly",
+        month:  mr.budget?.month  ?? now.getMonth() + 1,
+        year:   mr.budget?.year   ?? now.getFullYear(),
+      };
+    }
+  }
+
+  // Savings
+  let extractedSavings: object | null = null;
+  if (mr.intent === "log_savings" && mr.savingsGoal) {
+    extractedSavings = {
+      action:        "create",
+      name:          mr.savingsGoal.name,
+      targetAmount:  mr.savingsGoal.targetAmount,
+      currentAmount: mr.savingsGoal.currentAmount,
+      deadline:      new Date(mr.savingsGoal.deadline).toISOString(),
+      color:         "#0369a1",
+    };
+  }
+
+  if (mr.intent === "edit_savings" && mr.savingsEdit) {
+    const keyword = mr.savingsEdit.matchName.toLowerCase();
+    const match   = savingsGoals.find((g) => g.name.toLowerCase().includes(keyword));
+    if (match) {
+      // Compute new currentAmount based on deposit or withdrawal
+      let newCurrentAmount: number | undefined;
+      if (mr.savingsEdit.depositAmount !== undefined) {
+        newCurrentAmount = match.currentAmount + mr.savingsEdit.depositAmount;
+      } else if (mr.savingsEdit.withdrawAmount !== undefined) {
+        // Clamp at 0 — can't withdraw more than what's saved
+        newCurrentAmount = Math.max(0, match.currentAmount - mr.savingsEdit.withdrawAmount);
+      }
+
+      extractedSavings = {
+        action:        "update",
+        goalId:        match._id.toString(),
+        currentAmount: newCurrentAmount,
+        targetAmount:  mr.savingsEdit.targetAmount,
+        deadline:      mr.savingsEdit.deadline
+          ? new Date(mr.savingsEdit.deadline).toISOString()
+          : undefined,
+      };
+    }
+  }
 
   // Persist conversation
-  const lastUserMessage = parsed.data.messages[parsed.data.messages.length - 1];
-  if (lastUserMessage?.role === "user") {
-    await ChatMessage.create({
-      userId:  session.user.id,
-      role:    "user",
-      content: lastUserMessage.content,
-    });
+  const lastUser = parsed.data.messages[parsed.data.messages.length - 1];
+  if (lastUser?.role === "user") {
+    await ChatMessage.create({ userId: session.user.id, role: "user", content: lastUser.content });
   }
-  await ChatMessage.create({
-    userId:  session.user.id,
-    role:    "assistant",
-    content: cleanReply,
-  });
-
-  const normalizedBudgets = finalBudgets.map(normalizeBudget);
+  await ChatMessage.create({ userId: session.user.id, role: "assistant", content: mr.reply });
 
   return NextResponse.json({
-    reply: cleanReply,
-    extractedExpenses: finalExpenses.map((e, i) => ({
-      _id:         `extracted-expense-${i}`,
-      amount:      e.amount,
-      category:    e.category,
-      description: e.description,
-      date:        e.date ? new Date(e.date).toISOString() : new Date().toISOString(),
-    })),
-    extractedBudgets: normalizedBudgets.map((b, i) => ({
-      _id:      `extracted-budget-${i}`,
-      category: b.category,
-      limit:    b.limit,
-      period:   b.period,
-      month:    b.month,
-      year:     b.year,
-    })),
+    reply: mr.reply,
+    extractedExpense,
+    extractedEdit,
+    extractedBudget,
+    extractedSavings,
   });
 }

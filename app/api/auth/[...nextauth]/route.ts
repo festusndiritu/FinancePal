@@ -1,40 +1,5 @@
-import { NextResponse } from "next/server";
+import { handlers } from "@/auth";
 
-async function resolveAuthHandlers() {
-	if (!process.env.MONGODB_URI || !process.env.NEXTAUTH_SECRET) {
-		return null;
-	}
-
-	const { handlers } = await import("@/auth");
-	return handlers;
-}
-
-function missingConfigResponse() {
-	return NextResponse.json(
-		{
-			error:
-				"Auth is not configured. Set MONGODB_URI and NEXTAUTH_SECRET in your environment.",
-		},
-		{ status: 503 },
-	);
-}
-
-export async function GET(request: Request) {
-	const handlers = await resolveAuthHandlers();
-
-	if (!handlers) {
-		return missingConfigResponse();
-	}
-
-	return handlers.GET(request);
-}
-
-export async function POST(request: Request) {
-	const handlers = await resolveAuthHandlers();
-
-	if (!handlers) {
-		return missingConfigResponse();
-	}
-
-	return handlers.POST(request);
-}
+// Export the GET and POST handlers that NextAuth needs to handle
+// /api/auth/[...nextauth] — session, signin, signout, csrf, etc.
+export const { GET, POST } = handlers;

@@ -1,138 +1,183 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, TrendingDown, TrendingUp, Wallet } from "lucide-react";
-import { useBudgets } from "@/hooks/useBudgets";
-import { useReports } from "@/hooks/useReports";
+import { useEffect, useRef, useState } from "react";
+import { TrendingDown, TrendingUp, Wallet, PiggyBank, ArrowRight } from "lucide-react";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
 
-function formatKes(value: number) {
-  return new Intl.NumberFormat("en-KE", {
-    style: "currency",
-    currency: "KES",
-    maximumFractionDigits: 0,
-  }).format(value);
+type MonthlyData = { thisMonthTotal: number; lastMonthTotal: number; changePercent: number };
+type BudgetData  = { _id: string; limit: number; spent: number; category: string };
+type SavingsGoal = { _id: string; targetAmount: number; currentAmount: number; progressPercent: number };
+
+function CardSkeleton({ className }: { className: string }) {
+  return (
+    <div className={cn("relative overflow-hidden rounded-2xl p-5 shadow-lg", className)}>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="h-3 w-24 animate-pulse rounded-full bg-white/30" />
+        <div className="h-8 w-8 animate-pulse rounded-xl bg-white/30" />
+      </div>
+      <div className="h-9 w-36 animate-pulse rounded-lg bg-white/30" />
+      <div className="mt-2 h-3 w-28 animate-pulse rounded-full bg-white/20" />
+    </div>
+  );
 }
 
 export default function OverviewCards() {
-  const { data: reportData, error: reportError, mutate: mutateReport } = useReports("/api/reports?type=monthly");
-  const { budgets, error: budgetsError, mutate: mutateBudgets } = useBudgets();
-  const [error, setError] = useState<string | null>(null);
+  // Explicit null initial values to satisfy TS — each is MonthlyData|null etc.
+  const [monthly,  setMonthly]  = useState<MonthlyData | null>(null);
+  const [budgets,  setBudgets]  = useState<BudgetData[]  | null>(null);
+  const [savings,  setSavings]  = useState<SavingsGoal[] | null>(null);
 
-  const summary = useMemo(() => {
-    if (!reportData || reportData.type !== "monthly") return null;
-    const now = new Date();
-    const currentMonth = now.getMonth() + 1;
-    const currentYear = now.getFullYear();
-    const currentMonthlyBudgets = budgets.filter(
-      (b) => b.period === "monthly" && b.month === currentMonth && b.year === currentYear,
-    );
-    const budgetTotal = currentMonthlyBudgets.reduce((sum, b) => sum + b.limit, 0);
-    const totalSpend = reportData.data.thisMonthTotal;
-    const budgetRemaining = Math.max(0, budgetTotal - totalSpend);
-    const budgetUsagePercent = budgetTotal > 0 ? (totalSpend / budgetTotal) * 100 : 0;
-    const savingsAmount =
-      reportData.data.topCategories.find((item) => item.category === "savings")?.total ?? 0;
-    return {
-      totalSpend,
-      budgetRemaining,
-      budgetUsagePercent,
-      savingsAmount,
-      spendChangePercent: reportData.data.changePercent,
+  const loadRef = useRef<(() => void) | null>(null);
+
+  const load = () => {
+    fetch("/api/reports?type=monthly")
+      .then((r) => r.ok ? r.json() : null)
+      .then((p: { data: MonthlyData } | null) => { if (p) setMonthly(p.data); })
+      .catch(() => setMonthly({ thisMonthTotal: 0, lastMonthTotal: 0, changePercent: 0 }));
+
+    fetch("/api/budgets")
+      .then((r) => r.ok ? r.json() : null)
+      .then((p: { data: BudgetData[] } | null) => setBudgets(p?.data ?? []))
+      .catch(() => setBudgets([]));
+
+    fetch("/api/savings")
+      .then((r) => r.ok ? r.json() : null)
+      .then((p: { data: SavingsGoal[] } | null) => setSavings(p?.data ?? []))
+      .catch(() => setSavings([]));
+  };
+
+  loadRef.current = load;
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    const handler = () => { loadRef.current?.(); };
+    window.addEventListener("financepal:expenses-updated", handler);
+    window.addEventListener("financepal:budgets-updated", handler);
+    return () => {
+      window.removeEventListener("financepal:expenses-updated", handler);
+      window.removeEventListener("financepal:budgets-updated", handler);
     };
-  }, [reportData, budgets]);
+  }, []);
 
-  useEffect(() => {
-    setError(reportError || budgetsError ? "Unable to load summary" : null);
-  }, [reportError, budgetsError]);
+  const thisMonth  = monthly?.thisMonthTotal ?? 0;
+  const changeAbs  = monthly ? Math.abs(monthly.changePercent) : 0;
+  const isUp       = (monthly?.changePercent ?? 0) >= 0;
 
-  useEffect(() => {
-    const handleRefresh = () => { void mutateReport(); void mutateBudgets(); };
-    window.addEventListener("financepal:expenses-updated", handleRefresh);
-    return () => window.removeEventListener("financepal:expenses-updated", handleRefresh);
-  }, [mutateBudgets, mutateReport]);
+  const totalLimit = (budgets ?? []).reduce((s, b) => s + b.limit, 0);
+  const totalSpent = (budgets ?? []).reduce((s, b) => s + (b.spent ?? 0), 0);
+  const budgetLeft = Math.max(totalLimit - totalSpent, 0);
+  const budgetPct  = totalLimit > 0 ? (totalSpent / totalLimit) * 100 : 0;
 
-  const spendChange = summary?.spendChangePercent ?? 0;
-  const budgetUsage = summary?.budgetUsagePercent ?? 0;
-  const isOverBudget = budgetUsage >= 80;
+  const totalSaved     = (savings ?? []).reduce((s, g) => s + g.currentAmount, 0);
+  const totalTarget    = (savings ?? []).reduce((s, g) => s + g.targetAmount, 0);
+  const savingsPct     = totalTarget > 0 ? Math.min((totalSaved / totalTarget) * 100, 100) : 0;
+  const goalsCount     = savings?.length ?? 0;
+  const completedGoals = (savings ?? []).filter((g) => g.progressPercent >= 100).length;
 
   return (
-    <section>
-      {error && (
-        <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </p>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+
+      {/* This Month */}
+      {monthly === null ? (
+        <CardSkeleton className="bg-gradient-to-br from-rose-500 to-rose-600" />
+      ) : (
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-rose-500 to-rose-600 p-5 text-white shadow-lg shadow-rose-500/20">
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="absolute -bottom-6 -right-2 h-20 w-20 rounded-full bg-white/10" />
+          <div className="relative">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-wider text-rose-100">This Month</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20"><Wallet className="h-4 w-4" /></div>
+            </div>
+            <p className="text-3xl font-black">KES {thisMonth.toLocaleString()}</p>
+            <div className="mt-2 flex items-center gap-1.5">
+              {isUp ? <TrendingUp className="h-3.5 w-3.5 text-rose-200" /> : <TrendingDown className="h-3.5 w-3.5 text-emerald-300" />}
+              <span className={cn("text-xs font-bold", isUp ? "text-rose-200" : "text-emerald-300")}>
+                {changeAbs.toFixed(1)}% vs last month
+              </span>
+            </div>
+          </div>
+        </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        {/* Monthly Spend */}
-        <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="absolute -right-5 -top-5 h-24 w-24 rounded-full bg-rose-50" />
-          <div className="mb-5 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-              This Month
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50">
-              <ArrowUpRight className="h-4.5 w-4.5 text-rose-500" />
+      {/* Budget Left */}
+      {budgets === null ? (
+        <CardSkeleton className="bg-gradient-to-br from-sky-700 to-sky-800" />
+      ) : (
+        <div className={cn(
+          "relative overflow-hidden rounded-2xl p-5 text-white shadow-lg",
+          budgetPct >= 100 ? "bg-gradient-to-br from-red-500 to-red-600 shadow-red-500/20"
+            : budgetPct >= 80 ? "bg-gradient-to-br from-amber-500 to-amber-600 shadow-amber-500/20"
+            : "bg-gradient-to-br from-sky-700 to-sky-800 shadow-sky-700/20",
+        )}>
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="absolute -bottom-6 -right-2 h-20 w-20 rounded-full bg-white/10" />
+          <div className="relative">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-wider opacity-80">Budget Left</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20"><TrendingDown className="h-4 w-4" /></div>
             </div>
-          </div>
-          <p className="text-4xl font-black leading-none tracking-tight text-slate-900">
-            {formatKes(summary?.totalSpend ?? 0)}
-          </p>
-          <div className={`mt-4 flex items-center gap-1.5 text-sm font-semibold ${spendChange > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-            {spendChange > 0
-              ? <TrendingUp className="h-4 w-4" />
-              : <TrendingDown className="h-4 w-4" />
-            }
-            {Math.abs(spendChange).toFixed(1)}% vs last month
+            {totalLimit > 0 ? (
+              <>
+                <p className="text-3xl font-black">KES {budgetLeft.toLocaleString()}</p>
+                <div className="mt-2">
+                  <div className="mb-1 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+                    <div className="h-full rounded-full bg-white/70 transition-all" style={{ width: `${Math.min(budgetPct, 100)}%` }} />
+                  </div>
+                  <p className="text-xs font-semibold opacity-80">{budgetPct.toFixed(0)}% used of KES {totalLimit.toLocaleString()}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-black opacity-60">No budgets set</p>
+                <Link href="/budgets" className="mt-2 flex items-center gap-1 text-xs font-bold opacity-80 hover:opacity-100">
+                  Set a budget <ArrowRight className="h-3 w-3" />
+                </Link>
+              </>
+            )}
           </div>
         </div>
+      )}
 
-        {/* Budget Remaining */}
-        <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="absolute -right-5 -top-5 h-24 w-24 rounded-full bg-sky-50" />
-          <div className="mb-5 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-              Budget Left
-            </span>
-            <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${isOverBudget ? "bg-amber-50" : "bg-sky-50"}`}>
-              <Wallet className={`h-4.5 w-4.5 ${isOverBudget ? "text-amber-500" : "text-sky-600"}`} />
+      {/* Savings */}
+      {savings === null ? (
+        <CardSkeleton className="bg-gradient-to-br from-emerald-500 to-emerald-600" />
+      ) : (
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 p-5 text-white shadow-lg shadow-emerald-500/20">
+          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+          <div className="absolute -bottom-6 -right-2 h-20 w-20 rounded-full bg-white/10" />
+          <div className="relative">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-100">Savings</p>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20"><PiggyBank className="h-4 w-4" /></div>
             </div>
-          </div>
-          <p className="text-4xl font-black leading-none tracking-tight text-slate-900">
-            {formatKes(summary?.budgetRemaining ?? 0)}
-          </p>
-          <div className="mt-4 space-y-2">
-            <div className="flex justify-between text-xs font-semibold text-slate-400">
-              <span>{budgetUsage.toFixed(0)}% of budget used</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className={`h-full rounded-full transition-all duration-700 ${isOverBudget ? "bg-amber-400" : "bg-sky-500"}`}
-                style={{ width: `${Math.min(100, budgetUsage)}%` }}
-              />
-            </div>
+            {goalsCount > 0 ? (
+              <>
+                <p className="text-3xl font-black">KES {totalSaved.toLocaleString()}</p>
+                <div className="mt-2">
+                  <div className="mb-1 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+                    <div className="h-full rounded-full bg-white/70 transition-all" style={{ width: `${savingsPct}%` }} />
+                  </div>
+                  <p className="text-xs font-semibold text-emerald-100">
+                    {completedGoals}/{goalsCount} goal{goalsCount !== 1 ? "s" : ""} · {savingsPct.toFixed(0)}% overall
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-black opacity-60">No goals yet</p>
+                <Link href="/savings" className="mt-2 flex items-center gap-1 text-xs font-bold opacity-80 hover:opacity-100">
+                  Create a goal <ArrowRight className="h-3 w-3" />
+                </Link>
+              </>
+            )}
           </div>
         </div>
+      )}
 
-        {/* Savings */}
-        <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="absolute -right-5 -top-5 h-24 w-24 rounded-full bg-emerald-50" />
-          <div className="mb-5 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-              Savings
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50">
-              <ArrowDownRight className="h-4.5 w-4.5 text-emerald-600" />
-            </div>
-          </div>
-          <p className="text-4xl font-black leading-none tracking-tight text-slate-900">
-            {formatKes(summary?.savingsAmount ?? 0)}
-          </p>
-          <p className="mt-4 text-sm font-semibold text-slate-400">
-            Logged under savings this month
-          </p>
-        </div>
-      </div>
-    </section>
+    </div>
   );
 }

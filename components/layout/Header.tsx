@@ -1,74 +1,67 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { ChevronDown, Settings, LogOut } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { signOut } from "next-auth/react";
 import Link from "next/link";
-import { signOut, useSession } from "next-auth/react";
 import HeaderTitle from "@/components/layout/HeaderTitle";
+import MobileNav from "@/components/layout/MobileNav";
 import ConfirmDialog from "@/components/shared/ConfirmDialog";
 
-type HeaderProps = {
-  userName: string;
-};
+type Props = { userName: string };
 
-export default function Header({ userName: initialUserName }: HeaderProps) {
+export default function Header({ userName }: Props) {
   const { data: session } = useSession();
-  // Use session name if available (reflects immediate updates from settings)
-  const userName = session?.user?.name ?? initialUserName;
+  const name = session?.user?.name ?? userName;
 
-  const [open, setOpen] = useState(false);
+  const [dropdownOpen, setDropdownOpen]         = useState(false);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
     };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   return (
     <>
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
-        <HeaderTitle />
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 md:px-6">
+        <div className="flex items-center gap-3">
+          <MobileNav />
+          <HeaderTitle />
+        </div>
 
-        <div className="relative" ref={ref}>
+        <div className="relative" ref={dropdownRef}>
           <button
-            onClick={() => setOpen((v) => !v)}
-            className="flex items-center gap-2 rounded-xl p-1.5 pr-2.5 transition-colors hover:bg-slate-100"
-            aria-expanded={open}
+            onClick={() => setDropdownOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 transition-colors hover:bg-slate-50"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sky-900 text-sm font-bold text-white">
-              {userName.charAt(0).toUpperCase()}
+            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-sky-600 text-xs font-black text-white">
+              {name.charAt(0).toUpperCase()}
             </div>
-            <span className="hidden text-sm font-semibold text-slate-700 md:block">{userName}</span>
-            <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+            <span className="hidden text-sm font-semibold text-slate-700 sm:inline">{name}</span>
+            <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${dropdownOpen ? "rotate-180" : ""}`} />
           </button>
 
-          {open && (
-            <div className="absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl shadow-slate-200/80">
-              <div className="border-b border-slate-100 px-4 py-3">
-                <p className="text-sm font-bold text-slate-900">{userName}</p>
-                <p className="text-xs text-slate-500">Free plan</p>
-              </div>
-              <div className="p-1.5">
-                <Link
-                  href="/settings"
-                  onClick={() => setOpen(false)}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                >
-                  <Settings className="h-4 w-4 text-slate-400" />
-                  Settings
-                </Link>
-                <button
-                  onClick={() => { setOpen(false); setShowSignOutConfirm(true); }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-rose-600 transition-colors hover:bg-rose-50"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign out
-                </button>
-              </div>
+          {dropdownOpen && (
+            <div className="absolute right-0 top-full z-30 mt-1.5 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+              <Link href="/settings" onClick={() => setDropdownOpen(false)}
+                className="flex items-center gap-2.5 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50">
+                <Settings className="h-4 w-4 text-slate-400" /> Settings
+              </Link>
+              <div className="border-t border-slate-100" />
+              <button
+                onClick={() => { setDropdownOpen(false); setShowSignOutConfirm(true); }}
+                className="flex w-full items-center gap-2.5 px-4 py-3 text-sm text-rose-600 hover:bg-rose-50"
+              >
+                <LogOut className="h-4 w-4" /> Sign out
+              </button>
             </div>
           )}
         </div>
@@ -76,8 +69,8 @@ export default function Header({ userName: initialUserName }: HeaderProps) {
 
       {showSignOutConfirm && (
         <ConfirmDialog
-          title="Sign out"
-          message="Are you sure you want to sign out of FinancePal?"
+          title="Sign out?"
+          message="You'll need to sign back in to access your account."
           confirmLabel="Sign out"
           confirmVariant="danger"
           onConfirm={() => void signOut({ callbackUrl: "/login" })}
