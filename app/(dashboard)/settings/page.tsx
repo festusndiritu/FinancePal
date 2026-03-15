@@ -227,7 +227,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <h2 className="text-base font-bold text-slate-900">Sign out</h2>
-            <p className="mt-0.5 text-sm text-slate-500">You'll be returned to the login screen.</p>
+            <p className="mt-0.5 text-sm text-slate-500">You&apos;ll be returned to the login screen.</p>
           </div>
         </div>
         <button
