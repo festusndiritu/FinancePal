@@ -1,7 +1,9 @@
+import { Suspense } from "react";
 import { auth } from "@/auth";
 import Header from "@/components/layout/Header";
-import MobileNav from "@/components/layout/MobileNav";
 import Sidebar from "@/components/layout/Sidebar";
+import MobileBottomNav from "@/components/layout/MobileBottomNav";
+import ChatFab from "@/components/chat/ChatFab";
 
 export default async function DashboardLayout({
   children,
@@ -12,18 +14,18 @@ export default async function DashboardLayout({
   const userName = session?.user?.name ?? "User";
 
   return (
-    <div className="h-screen overflow-hidden">
-      <div className="flex h-full w-full">
-        <Sidebar userName={userName} />
-
-        <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-white">
-          <Header userName={userName} />
-          <div className="px-6 py-4 md:hidden">
-            <MobileNav userName={userName} />
+    <div className="flex h-screen overflow-hidden bg-slate-50">
+      <Sidebar userName={userName} />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <Header userName={userName} />
+        <Suspense>
+          <div className="flex-1 overflow-auto pb-20 md:pb-0">
+            {children}
           </div>
-          <div className="flex-1 overflow-auto p-6">{children}</div>
-        </div>
+        </Suspense>
       </div>
+      <ChatFab />
+      <MobileBottomNav />
     </div>
   );
 }

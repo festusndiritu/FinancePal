@@ -37,12 +37,8 @@ function getRange(period: "monthly" | "weekly", month: number, year: number) {
 }
 
 function getAlertLevel(usagePercent: number): "ok" | "warning" | "danger" {
-  if (usagePercent >= 100) {
-    return "danger";
-  }
-  if (usagePercent >= 80) {
-    return "warning";
-  }
+  if (usagePercent >= 100) return "danger";
+  if (usagePercent >= 80)  return "warning";
   return "ok";
 }
 
@@ -167,10 +163,10 @@ export async function PATCH(request: Request) {
 
   const updateData: Record<string, unknown> = {};
   if (parsed.data.category) updateData.category = parsed.data.category;
-  if (parsed.data.limit) updateData.limit = parsed.data.limit;
-  if (parsed.data.period) updateData.period = parsed.data.period;
-  if (parsed.data.month) updateData.month = parsed.data.month;
-  if (parsed.data.year) updateData.year = parsed.data.year;
+  if (parsed.data.limit)    updateData.limit    = parsed.data.limit;
+  if (parsed.data.period)   updateData.period   = parsed.data.period;
+  if (parsed.data.month)    updateData.month    = parsed.data.month;
+  if (parsed.data.year)     updateData.year     = parsed.data.year;
 
   const updated = await Budget.findOneAndUpdate(
     { _id: parsed.data.id, userId: session.user.id },
@@ -192,4 +188,32 @@ export async function PATCH(request: Request) {
       year: updated.year,
     },
   });
+}
+
+export async function DELETE(request: Request) {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Invalid budget id" }, { status: 400 });
+  }
+
+  await dbConnect();
+
+  const deleted = await Budget.findOneAndDelete({
+    _id: id,
+    userId: session.user.id,
+  }).lean();
+
+  if (!deleted) {
+    return NextResponse.json({ error: "Budget not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ success: true });
 }

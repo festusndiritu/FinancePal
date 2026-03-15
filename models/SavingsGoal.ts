@@ -1,46 +1,30 @@
-import { model, models, Schema, type InferSchemaType } from "mongoose";
+import mongoose, { Schema, type Document, type Model } from "mongoose";
 
-const SavingsGoalSchema = new Schema(
+export interface ISavingsGoal extends Document {
+  userId: mongoose.Types.ObjectId;
+  name: string;
+  targetAmount: number;
+  currentAmount: number;
+  deadline: Date;
+  color: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const SavingsGoalSchema = new Schema<ISavingsGoal>(
   {
-    userId: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    targetAmount: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-    currentAmount: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    deadline: {
-      type: Date,
-      required: true,
-    },
-    color: {
-      type: String,
-      default: "#0ea5e9",
-      trim: true,
-    },
+    userId:        { type: Schema.Types.ObjectId, required: true, index: true },
+    name:          { type: String, required: true, trim: true, maxlength: 100 },
+    targetAmount:  { type: Number, required: true, min: 1 },
+    currentAmount: { type: Number, required: true, default: 0, min: 0 },
+    deadline:      { type: Date, required: true },
+    color:         { type: String, default: "#0369a1" },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
 
-export type SavingsGoalDocument = InferSchemaType<typeof SavingsGoalSchema>;
-
-const SavingsGoal =
-  models.SavingsGoal || model("SavingsGoal", SavingsGoalSchema);
+const SavingsGoal: Model<ISavingsGoal> =
+  mongoose.models.SavingsGoal ??
+  mongoose.model<ISavingsGoal>("SavingsGoal", SavingsGoalSchema);
 
 export default SavingsGoal;
