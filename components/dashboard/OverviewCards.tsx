@@ -49,7 +49,6 @@ export default function OverviewCards() {
 
   loadRef.current = load;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, []);
 
   useEffect(() => {

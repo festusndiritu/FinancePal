@@ -8,7 +8,16 @@ import Expense from "@/models/Expense";
 import Budget from "@/models/Budget";
 import SavingsGoal from "@/models/SavingsGoal";
 import { expenseCategories } from "@/types";
-import { startOfMonth, endOfMonth, startOfDay, endOfDay, format } from "date-fns";
+import { startOfMonth, endOfMonth, startOfDay, endOfDay, format, addMonths } from "date-fns";
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// Normalise period: extract "monthly" or "weekly" from whatever the model sends
+function normalisePeriod(raw: unknown): "monthly" | "weekly" {
+  const s = String(raw ?? "").toLowerCase();
+  if (s.includes("week")) return "weekly";
+  return "monthly"; // default
+}
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -21,6 +30,7 @@ const payloadSchema = z.object({
   messages: z.array(messageSchema).min(1).max(20),
 });
 
+// Use z.coerce where the model might send strings instead of numbers
 const modelResponseSchema = z.object({
   intent: z.enum([
     "log_expense", "edit_expense",
@@ -31,7 +41,7 @@ const modelResponseSchema = z.object({
   reply: z.string().min(1),
 
   expense: z.object({
-    amount:      z.number().positive(),
+    amount:      z.coerce.number().positive(),
     category:    z.enum(expenseCategories),
     description: z.string().min(1).max(200),
     date:        z.string().optional(),
@@ -39,38 +49,39 @@ const modelResponseSchema = z.object({
 
   expenseEdit: z.object({
     matchDescription: z.string(),
-    amount:           z.number().positive().optional(),
+    amount:           z.coerce.number().positive().optional(),
     category:         z.enum(expenseCategories).optional(),
     description:      z.string().optional(),
   }).nullable().default(null),
 
   budget: z.object({
     category: z.enum(expenseCategories),
-    limit:    z.number().positive(),
-    period:   z.enum(["monthly", "weekly"]).default("monthly"),
-    month:    z.number().int().min(1).max(12).optional(),
-    year:     z.number().int().min(2000).max(2100).optional(),
+    // coerce covers "3000" → 3000
+    limit:    z.coerce.number().positive(),
+    // accept any string, normalise below
+    period:   z.string().default("monthly"),
+    month:    z.coerce.number().int().min(1).max(12).optional(),
+    year:     z.coerce.number().int().min(2000).max(2100).optional(),
   }).nullable().default(null),
 
   budgetEdit: z.object({
     category: z.enum(expenseCategories),
-    limit:    z.number().positive(),
+    limit:    z.coerce.number().positive(),
   }).nullable().default(null),
 
   savingsGoal: z.object({
     name:          z.string().min(1).max(100),
-    targetAmount:  z.number().positive(),
-    currentAmount: z.number().min(0).default(0),
-    deadline:      z.string(),
+    targetAmount:  z.coerce.number().positive(),
+    currentAmount: z.coerce.number().min(0).default(0),
+    // null/missing deadline → default to 6 months from now server-side
+    deadline:      z.string().nullable().optional(),
   }).nullable().default(null),
 
   savingsEdit: z.object({
     matchName:      z.string(),
-    // positive = deposit, negative = withdrawal
-    // Use depositAmount for adding money, withdrawAmount for taking money out
-    depositAmount:  z.number().positive().optional(),
-    withdrawAmount: z.number().positive().optional(),
-    targetAmount:   z.number().positive().optional(),
+    depositAmount:  z.coerce.number().optional(),
+    withdrawAmount: z.coerce.number().optional(),
+    targetAmount:   z.coerce.number().positive().optional(),
     deadline:       z.string().optional(),
   }).nullable().default(null),
 });
@@ -145,8 +156,7 @@ export async function POST(request: Request) {
   const budgetLines = budgets.length > 0
     ? budgets.map((b) => {
         const spent = byCategory[b.category] ?? 0;
-        const left  = b.limit - spent;
-        return `  [${b._id}] ${b.category}: KES ${spent.toLocaleString()} spent / KES ${b.limit.toLocaleString()} limit — KES ${left.toLocaleString()} left`;
+        return `  ${b.category}: KES ${spent.toLocaleString()} / KES ${b.limit.toLocaleString()} limit — KES ${(b.limit - spent).toLocaleString()} left`;
       }).join("\n")
     : "  (none)";
 
@@ -157,7 +167,7 @@ export async function POST(request: Request) {
       }).join("\n")
     : "  (none)";
 
-  const recentExpenseLines = monthlyExpenses.slice(0, 12)
+  const recentLines = monthlyExpenses.slice(0, 12)
     .map((e) => `  [${e._id}] ${format(new Date(e.date), "MMM d")} | ${e.category} | KES ${e.amount} | ${e.description}`)
     .join("\n") || "  (none)";
 
@@ -165,62 +175,59 @@ export async function POST(request: Request) {
 Currency: KES. Today: ${format(now, "EEEE, MMMM d, yyyy")}.
 Categories: ${expenseCategories.join(", ")}.
 
-Respond ONLY with a valid JSON object matching this exact schema:
+Respond ONLY with a valid JSON object:
 {
-  "intent": one of: log_expense | edit_expense | log_budget | edit_budget | log_savings | edit_savings | query,
-  "reply": "1-2 sentence natural language confirmation or answer",
-  "expense": { amount, category, description, date } or null,
-  "expenseEdit": { matchDescription, amount?, category?, description? } or null,
-  "budget": { category, limit, period, month?, year? } or null,
-  "budgetEdit": { category, limit } or null,
-  "savingsGoal": { name, targetAmount, currentAmount, deadline } or null,
-  "savingsEdit": { matchName, depositAmount?, withdrawAmount?, targetAmount?, deadline? } or null
+  "intent": "log_expense"|"edit_expense"|"log_budget"|"edit_budget"|"log_savings"|"edit_savings"|"query",
+  "reply": "1-2 complete sentences",
+  "expense":     { "amount": number, "category": string, "description": string, "date"?: "YYYY-MM-DD" } | null,
+  "expenseEdit": { "matchDescription": string, "amount"?: number, "category"?: string, "description"?: string } | null,
+  "budget":      { "category": string, "limit": number, "period": "monthly"|"weekly" } | null,
+  "budgetEdit":  { "category": string, "limit": number } | null,
+  "savingsGoal": { "name": string, "targetAmount": number, "currentAmount": number, "deadline": "YYYY-MM-DD" } | null,
+  "savingsEdit": { "matchName": string, "depositAmount"?: number, "withdrawAmount"?: number, "targetAmount"?: number } | null
 }
 
-INTENT GUIDE — pick the single best intent, fill the matching field, all others null:
+INTENT GUIDE — one intent, fill only the matching field, all others must be null:
 
 log_expense   → new expense → fill "expense"
-edit_expense  → change an existing expense → fill "expenseEdit"
-log_budget    → create a budget → fill "budget"
+edit_expense  → change existing expense → fill "expenseEdit" (matchDescription: keyword from description)
+log_budget    → set/create a budget → fill "budget" with limit as a NUMBER (e.g. 3000 not "3000")
 edit_budget   → change a budget limit → fill "budgetEdit"
-log_savings   → create a savings goal → fill "savingsGoal"
-edit_savings  → deposit TO or withdraw FROM a goal, or update goal details → fill "savingsEdit"
-query         → question about data → all action fields null
+log_savings   → create a savings goal → fill "savingsGoal" (deadline MUST be "YYYY-MM-DD" string, never null)
+edit_savings  → deposit/withdraw from a goal → fill "savingsEdit"
+query         → question about data → ALL fields null, answer from context only
 
-SAVINGS EDIT RULES (very important):
-- "deposit / add / save / put in" → use depositAmount (positive)
-- "withdraw / take out / take from / reduce by / use from / pull from" → use withdrawAmount (positive number representing the amount taken out)
-- Never use negative numbers. depositAmount and withdrawAmount are always positive.
-- matchName: keyword from the goal name (e.g. "emergency" for "emergency fund")
+SAVINGS AMOUNTS (always positive numbers):
+- Adding money → depositAmount
+- Taking money out → withdrawAmount
+- "reduce by", "take out", "withdraw", "pull from" all mean withdrawAmount
 
-COMBINED ACTIONS: If the user says "take 300 from emergency fund for supper", that is TWO actions:
-  1. edit_savings with withdrawAmount: 300 from emergency fund
-  2. log_expense with amount: 300, description: "supper", category: "food"
-  In this case, pick the PRIMARY intent as "edit_savings" and also fill in "expense" (the secondary action).
-  Both fields can be non-null simultaneously only in this combined scenario.
+COMBINED: If user withdraws from savings AND makes a purchase in the same message,
+set intent to "edit_savings", fill "savingsEdit" AND also fill "expense".
 
-RULES:
-- reply MUST be complete (1-2 sentences). Never truncate.
-- Never put JSON or "breakdown:" in reply.
-- For edit_budget: only fill "budgetEdit", system handles finding the existing budget.
-- Default to query if unsure.
+IMPORTANT:
+- limit in budget MUST be a number, never a string
+- period MUST be exactly "monthly" or "weekly", nothing else
+- deadline in savingsGoal MUST be a YYYY-MM-DD string, never null or omitted
+- reply must be complete — never truncate
+- never put JSON or arrays in reply
 
 ══════════════════════════════
 CONTEXT (read-only)
 ══════════════════════════════
-This month (${format(now, "MMMM yyyy")}): KES ${totalMonth.toLocaleString()} total
-Today: KES ${totalToday.toLocaleString()}
+Month: ${format(now, "MMMM yyyy")} | Total: KES ${totalMonth.toLocaleString()} | Today: KES ${totalToday.toLocaleString()}
+
 By category:
 ${categoryLines}
 
 Budgets:
 ${budgetLines}
 
-Savings goals:
+Savings:
 ${savingsLines}
 
 Recent expenses (READ ONLY — never re-log):
-${recentExpenseLines}
+${recentLines}
 `;
 
   const completion = await groq.chat.completions.create({
@@ -257,9 +264,8 @@ ${recentExpenseLines}
     };
   }
 
-  // ── Build extracted payloads ──────────────────────────────────────────────
+  // ── Build payloads ────────────────────────────────────────────────────────
 
-  // Expense — can come from log_expense OR as secondary in a combined savings withdrawal
   let extractedExpense: object | null = null;
   if (mr.expense && (mr.intent === "log_expense" || mr.intent === "edit_savings")) {
     extractedExpense = {
@@ -270,7 +276,6 @@ ${recentExpenseLines}
     };
   }
 
-  // Expense edit
   let extractedEdit: object | null = null;
   if (mr.intent === "edit_expense" && mr.expenseEdit) {
     const keyword = mr.expenseEdit.matchDescription.toLowerCase();
@@ -285,7 +290,6 @@ ${recentExpenseLines}
     }
   }
 
-  // Budget (create or edit)
   let extractedBudget: object | null = null;
   if (mr.intent === "log_budget" || mr.intent === "edit_budget") {
     const category = mr.budget?.category ?? mr.budgetEdit?.category;
@@ -294,22 +298,28 @@ ${recentExpenseLines}
       extractedBudget = {
         category,
         limit,
-        period: mr.budget?.period ?? "monthly",
+        // Normalise period — handles "monthly budget", "weekly", etc.
+        period: normalisePeriod(mr.budget?.period ?? "monthly"),
         month:  mr.budget?.month  ?? now.getMonth() + 1,
         year:   mr.budget?.year   ?? now.getFullYear(),
       };
     }
   }
 
-  // Savings
   let extractedSavings: object | null = null;
   if (mr.intent === "log_savings" && mr.savingsGoal) {
+    // Default deadline to 6 months from now if model sent null/empty
+    const deadlineStr = mr.savingsGoal.deadline;
+    const deadline    = deadlineStr
+      ? new Date(deadlineStr)
+      : addMonths(now, 6);
+
     extractedSavings = {
       action:        "create",
       name:          mr.savingsGoal.name,
       targetAmount:  mr.savingsGoal.targetAmount,
       currentAmount: mr.savingsGoal.currentAmount,
-      deadline:      new Date(mr.savingsGoal.deadline).toISOString(),
+      deadline:      deadline.toISOString(),
       color:         "#0369a1",
     };
   }
@@ -318,13 +328,11 @@ ${recentExpenseLines}
     const keyword = mr.savingsEdit.matchName.toLowerCase();
     const match   = savingsGoals.find((g) => g.name.toLowerCase().includes(keyword));
     if (match) {
-      // Compute new currentAmount based on deposit or withdrawal
       let newCurrentAmount: number | undefined;
       if (mr.savingsEdit.depositAmount !== undefined) {
-        newCurrentAmount = match.currentAmount + mr.savingsEdit.depositAmount;
+        newCurrentAmount = match.currentAmount + Math.abs(mr.savingsEdit.depositAmount);
       } else if (mr.savingsEdit.withdrawAmount !== undefined) {
-        // Clamp at 0 — can't withdraw more than what's saved
-        newCurrentAmount = Math.max(0, match.currentAmount - mr.savingsEdit.withdrawAmount);
+        newCurrentAmount = Math.max(0, match.currentAmount - Math.abs(mr.savingsEdit.withdrawAmount));
       }
 
       extractedSavings = {
