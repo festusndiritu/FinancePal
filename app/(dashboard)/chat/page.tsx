@@ -125,6 +125,7 @@ export default function ChatPage() {
     if (okEdit)    parts.push("✓ Expense updated");
     if (okBudget)  parts.push("✓ Budget saved");
     if (okSavings) parts.push(payload.extractedSavings!.action === "create" ? "✓ Goal created" : "✓ Goal updated");
+    if (okSavings) window.dispatchEvent(new Event("financepal:savings-updated"));
     if (parts.length) setStatusText(parts.join(" · "));
 
     if (okExpense || okEdit) window.dispatchEvent(new Event("financepal:expenses-updated"));

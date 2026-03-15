@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Plus, Pencil, Trash2, X, PiggyBank, CheckCircle2, Clock } from "lucide-react";
 import { format, differenceInDays, isPast } from "date-fns";
@@ -49,8 +49,8 @@ function defaultForm(goal?: SavingsGoal | null): GoalForm {
 // ── Progress ring ─────────────────────────────────────────────────────────────
 
 function ProgressRing({ pct, color, size = 52 }: { pct: number; color: string; size?: number }) {
-  const r    = (size - 10) / 2;
-  const circ = 2 * Math.PI * r;
+  const r      = (size - 10) / 2;
+  const circ   = 2 * Math.PI * r;
   const offset = circ - (pct / 100) * circ;
   return (
     <svg width={size} height={size} className="-rotate-90">
@@ -66,11 +66,11 @@ function ProgressRing({ pct, color, size = 52 }: { pct: number; color: string; s
 
 function GoalCard({ goal, onEdit, onDelete, onDeposit }: {
   goal: SavingsGoal;
-  onEdit: (g: SavingsGoal) => void;
-  onDelete: (g: SavingsGoal) => void;
+  onEdit:    (g: SavingsGoal) => void;
+  onDelete:  (g: SavingsGoal) => void;
   onDeposit: (g: SavingsGoal) => void;
 }) {
-  const pct      = Math.min(goal.progressPercent, 100);
+  const pct       = Math.min(goal.progressPercent, 100);
   const remaining = Math.max(goal.targetAmount - goal.currentAmount, 0);
   const deadline  = new Date(goal.deadline);
   const daysLeft  = differenceInDays(deadline, new Date());
@@ -107,12 +107,14 @@ function GoalCard({ goal, onEdit, onDelete, onDeposit }: {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5 md:opacity-0 md:transition-opacity md:group-hover:opacity-100">
-          <button onClick={() => onEdit(goal)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
-            aria-label="Edit"><Pencil className="h-3 w-3" /></button>
-          <button onClick={() => onDelete(goal)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-            aria-label="Delete"><Trash2 className="h-3 w-3" /></button>
+          <button onClick={() => onEdit(goal)} aria-label="Edit"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition-colors hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700">
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button onClick={() => onDelete(goal)} aria-label="Delete"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600">
+            <Trash2 className="h-3 w-3" />
+          </button>
         </div>
       </div>
 
@@ -144,7 +146,7 @@ function GoalCard({ goal, onEdit, onDelete, onDeposit }: {
   );
 }
 
-// ── Modal inner content ───────────────────────────────────────────────────────
+// ── Modal content ─────────────────────────────────────────────────────────────
 
 function ModalContent({ mode, form, setForm, saving, error, onSave, onClose }: {
   mode: "add" | "edit"; form: GoalForm;
@@ -215,14 +217,14 @@ function ModalContent({ mode, form, setForm, saving, error, onSave, onClose }: {
   );
 }
 
-// ── Goal modal (bottom sheet on mobile, dialog on desktop) ────────────────────
+// ── Goal modal ────────────────────────────────────────────────────────────────
 
 function GoalModal({ mode, goal, saving, error, onSave, onClose }: {
   mode: "add" | "edit"; goal: SavingsGoal | null;
   saving: boolean; error: string | null;
   onSave: (form: GoalForm, id?: string) => void; onClose: () => void;
 }) {
-  const [form, setForm] = useState<GoalForm>(() => defaultForm(goal));
+  const [form, setForm]   = useState<GoalForm>(() => defaultForm(goal));
   const [visible, setVisible] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -231,8 +233,7 @@ function GoalModal({ mode, goal, saving, error, onSave, onClose }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   if (!mounted) return null;
@@ -275,8 +276,7 @@ function DepositModal({ goal, onConfirm, onClose }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   if (!mounted) return null;
@@ -295,7 +295,8 @@ function DepositModal({ goal, onConfirm, onClose }: {
           className="mb-4 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-semibold text-slate-800 outline-none focus:border-sky-400 focus:bg-white transition-colors" />
         <div className="flex gap-3">
           <button onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
-          <button onClick={async () => { setSaving(true); await onConfirm(Number(amount)); setSaving(false); }}
+          <button
+            onClick={async () => { setSaving(true); await onConfirm(Number(amount)); setSaving(false); }}
             disabled={!amount || saving}
             className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white disabled:opacity-40"
             style={{ backgroundColor: goal.color }}>
@@ -318,8 +319,7 @@ function DeleteGoalDialog({ goal, deleting, onConfirm, onClose }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   if (!mounted) return null;
@@ -354,17 +354,20 @@ function DeleteGoalDialog({ goal, deleting, onConfirm, onClose }: {
 type Props = { data?: SavingsGoal[] };
 
 export default function SavingsTracker({ data: initialData }: Props) {
-  const [goals, setGoals]     = useState<SavingsGoal[]>(initialData ?? []);
+  const [goals, setGoals]   = useState<SavingsGoal[]>(initialData ?? []);
   const [loading, setLoading] = useState(!initialData);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError]   = useState<string | null>(null);
 
-  const [modalMode, setModalMode]     = useState<"add" | "edit" | null>(null);
-  const [editingGoal, setEditingGoal] = useState<SavingsGoal | null>(null);
-  const [saving, setSaving]           = useState(false);
-  const [saveError, setSaveError]     = useState<string | null>(null);
+  const [modalMode, setModalMode]       = useState<"add" | "edit" | null>(null);
+  const [editingGoal, setEditingGoal]   = useState<SavingsGoal | null>(null);
+  const [saving, setSaving]             = useState(false);
+  const [saveError, setSaveError]       = useState<string | null>(null);
   const [depositGoal, setDepositGoal]   = useState<SavingsGoal | null>(null);
   const [deletingGoal, setDeletingGoal] = useState<SavingsGoal | null>(null);
   const [deleting, setDeleting]         = useState(false);
+
+  // Keep a stable ref to load() so the event listener never goes stale
+  const loadRef = useRef<(() => Promise<void>) | null>(null);
 
   const load = async () => {
     setLoading(true); setError(null);
@@ -375,11 +378,27 @@ export default function SavingsTracker({ data: initialData }: Props) {
     setLoading(false);
   };
 
-  useEffect(() => { if (!initialData) void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (initialData) setGoals(initialData); }, [initialData]);
+  loadRef.current = load;
 
-  const openAdd  = () => { setEditingGoal(null); setSaveError(null); setModalMode("add"); };
-  const openEdit = (g: SavingsGoal) => { setEditingGoal(g); setSaveError(null); setModalMode("edit"); };
+  // Initial load (standalone mode only — when used inside Reports, data is passed as prop)
+  useEffect(() => {
+    if (!initialData) void load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync when parent passes new data (Reports page)
+  useEffect(() => {
+    if (initialData) setGoals(initialData);
+  }, [initialData]);
+
+  // ── Listen for savings updates from chat / FAB ──────────────────────────
+  useEffect(() => {
+    const handler = () => { void loadRef.current?.(); };
+    window.addEventListener("financepal:savings-updated", handler);
+    return () => window.removeEventListener("financepal:savings-updated", handler);
+  }, []);
+
+  const openAdd    = () => { setEditingGoal(null);  setSaveError(null); setModalMode("add"); };
+  const openEdit   = (g: SavingsGoal) => { setEditingGoal(g); setSaveError(null); setModalMode("edit"); };
   const closeModal = () => { setModalMode(null); setEditingGoal(null); setSaveError(null); };
 
   const handleSave = async (form: GoalForm, id?: string) => {
@@ -397,7 +416,8 @@ export default function SavingsTracker({ data: initialData }: Props) {
     });
     setSaving(false);
     if (!res.ok) { setSaveError("Something went wrong."); return; }
-    closeModal(); await load();
+    closeModal();
+    await load();
   };
 
   const handleDeposit = async (amount: number) => {
@@ -450,9 +470,11 @@ export default function SavingsTracker({ data: initialData }: Props) {
           {[1, 2].map((i) => <div key={i} className="h-44 animate-pulse rounded-2xl bg-slate-100" />)}
         </div>
       )}
+
       {!loading && error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
+
       {!loading && !error && goals.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-200 py-12 text-center">
           <PiggyBank className="h-10 w-10 text-slate-300" />
@@ -465,6 +487,7 @@ export default function SavingsTracker({ data: initialData }: Props) {
           </button>
         </div>
       )}
+
       {!loading && !error && goals.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2">
           {goals.map((g) => (
@@ -473,9 +496,16 @@ export default function SavingsTracker({ data: initialData }: Props) {
         </div>
       )}
 
-      {modalMode && <GoalModal mode={modalMode} goal={editingGoal} saving={saving} error={saveError} onSave={handleSave} onClose={closeModal} />}
-      {depositGoal && <DepositModal goal={depositGoal} onConfirm={handleDeposit} onClose={() => setDepositGoal(null)} />}
-      {deletingGoal && <DeleteGoalDialog goal={deletingGoal} deleting={deleting} onConfirm={handleDelete} onClose={() => setDeletingGoal(null)} />}
+      {modalMode && (
+        <GoalModal mode={modalMode} goal={editingGoal} saving={saving} error={saveError}
+          onSave={handleSave} onClose={closeModal} />
+      )}
+      {depositGoal && (
+        <DepositModal goal={depositGoal} onConfirm={handleDeposit} onClose={() => setDepositGoal(null)} />
+      )}
+      {deletingGoal && (
+        <DeleteGoalDialog goal={deletingGoal} deleting={deleting} onConfirm={handleDelete} onClose={() => setDeletingGoal(null)} />
+      )}
     </div>
   );
 }

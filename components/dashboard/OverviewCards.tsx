@@ -23,10 +23,9 @@ function CardSkeleton({ className }: { className: string }) {
 }
 
 export default function OverviewCards() {
-  // Explicit null initial values to satisfy TS — each is MonthlyData|null etc.
-  const [monthly,  setMonthly]  = useState<MonthlyData | null>(null);
-  const [budgets,  setBudgets]  = useState<BudgetData[]  | null>(null);
-  const [savings,  setSavings]  = useState<SavingsGoal[] | null>(null);
+  const [monthly, setMonthly] = useState<MonthlyData | null>(null);
+  const [budgets, setBudgets] = useState<BudgetData[]  | null>(null);
+  const [savings, setSavings] = useState<SavingsGoal[] | null>(null);
 
   const loadRef = useRef<(() => void) | null>(null);
 
@@ -47,9 +46,13 @@ export default function OverviewCards() {
       .catch(() => setSavings([]));
   };
 
+  // Keep ref in sync so the event handler always calls the latest version
   loadRef.current = load;
 
-  useEffect(() => { load(); }, []);
+  // Load on mount — ref pattern avoids stale closure without needing the disable comment
+  useEffect(() => {
+    loadRef.current?.();
+  }, []); // empty deps is intentional: only run once on mount
 
   useEffect(() => {
     const handler = () => { loadRef.current?.(); };
@@ -79,7 +82,6 @@ export default function OverviewCards() {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
 
-      {/* This Month */}
       {monthly === null ? (
         <CardSkeleton className="bg-gradient-to-br from-rose-500 to-rose-600" />
       ) : (
@@ -89,11 +91,15 @@ export default function OverviewCards() {
           <div className="relative">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-bold uppercase tracking-wider text-rose-100">This Month</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20"><Wallet className="h-4 w-4" /></div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20">
+                <Wallet className="h-4 w-4" />
+              </div>
             </div>
             <p className="text-3xl font-black">KES {thisMonth.toLocaleString()}</p>
             <div className="mt-2 flex items-center gap-1.5">
-              {isUp ? <TrendingUp className="h-3.5 w-3.5 text-rose-200" /> : <TrendingDown className="h-3.5 w-3.5 text-emerald-300" />}
+              {isUp
+                ? <TrendingUp  className="h-3.5 w-3.5 text-rose-200" />
+                : <TrendingDown className="h-3.5 w-3.5 text-emerald-300" />}
               <span className={cn("text-xs font-bold", isUp ? "text-rose-200" : "text-emerald-300")}>
                 {changeAbs.toFixed(1)}% vs last month
               </span>
@@ -102,7 +108,6 @@ export default function OverviewCards() {
         </div>
       )}
 
-      {/* Budget Left */}
       {budgets === null ? (
         <CardSkeleton className="bg-gradient-to-br from-sky-700 to-sky-800" />
       ) : (
@@ -117,16 +122,21 @@ export default function OverviewCards() {
           <div className="relative">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-bold uppercase tracking-wider opacity-80">Budget Left</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20"><TrendingDown className="h-4 w-4" /></div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20">
+                <TrendingDown className="h-4 w-4" />
+              </div>
             </div>
             {totalLimit > 0 ? (
               <>
                 <p className="text-3xl font-black">KES {budgetLeft.toLocaleString()}</p>
                 <div className="mt-2">
                   <div className="mb-1 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
-                    <div className="h-full rounded-full bg-white/70 transition-all" style={{ width: `${Math.min(budgetPct, 100)}%` }} />
+                    <div className="h-full rounded-full bg-white/70 transition-all"
+                      style={{ width: `${Math.min(budgetPct, 100)}%` }} />
                   </div>
-                  <p className="text-xs font-semibold opacity-80">{budgetPct.toFixed(0)}% used of KES {totalLimit.toLocaleString()}</p>
+                  <p className="text-xs font-semibold opacity-80">
+                    {budgetPct.toFixed(0)}% used of KES {totalLimit.toLocaleString()}
+                  </p>
                 </div>
               </>
             ) : (
@@ -141,7 +151,6 @@ export default function OverviewCards() {
         </div>
       )}
 
-      {/* Savings */}
       {savings === null ? (
         <CardSkeleton className="bg-gradient-to-br from-emerald-500 to-emerald-600" />
       ) : (
@@ -151,14 +160,17 @@ export default function OverviewCards() {
           <div className="relative">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-xs font-bold uppercase tracking-wider text-emerald-100">Savings</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20"><PiggyBank className="h-4 w-4" /></div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/20">
+                <PiggyBank className="h-4 w-4" />
+              </div>
             </div>
             {goalsCount > 0 ? (
               <>
                 <p className="text-3xl font-black">KES {totalSaved.toLocaleString()}</p>
                 <div className="mt-2">
                   <div className="mb-1 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
-                    <div className="h-full rounded-full bg-white/70 transition-all" style={{ width: `${savingsPct}%` }} />
+                    <div className="h-full rounded-full bg-white/70 transition-all"
+                      style={{ width: `${savingsPct}%` }} />
                   </div>
                   <p className="text-xs font-semibold text-emerald-100">
                     {completedGoals}/{goalsCount} goal{goalsCount !== 1 ? "s" : ""} · {savingsPct.toFixed(0)}% overall
@@ -176,7 +188,6 @@ export default function OverviewCards() {
           </div>
         </div>
       )}
-
     </div>
   );
 }

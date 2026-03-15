@@ -1,24 +1,16 @@
 "use client";
 
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import type { PieLabelRenderProps } from "recharts";
 import type { ExpenseCategory } from "@/types";
 
 type CategoryData = {
   category: ExpenseCategory;
-  total: number;
-  percent: number;
+  total:    number;
+  percent:  number;
 };
 
-type Props = {
-  data: CategoryData[];
-};
+type Props = { data: CategoryData[] };
 
 const CATEGORY_COLORS: Record<string, string> = {
   food:          "#f59e0b",
@@ -33,30 +25,50 @@ const CATEGORY_COLORS: Record<string, string> = {
   other:         "#94a3b8",
 };
 
-// Custom label rendered outside the slice — shows whole-number %
-function renderCustomLabel({
-  cx, cy, midAngle, innerRadius, outerRadius, percent,
-}: {
-  cx: number; cy: number; midAngle: number;
-  innerRadius: number; outerRadius: number; percent: number;
-}) {
-  const RADIAN = Math.PI / 180;
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.5 + 20;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  const pct = Math.round(percent * 100);
-  if (pct < 4) return null; // skip tiny slices to avoid overlap
+// Build the label renderer with access to the grand total so we can compute
+// percentage ourselves — never trust the `percent` prop from Recharts since
+// its scale (0-1 vs 0-100) differs across versions.
+function makeLabelRenderer(grandTotal: number) {
+  return function LabelRenderer(props: PieLabelRenderProps) {
+    const { cx, cy, midAngle, innerRadius, outerRadius, value } = props;
 
-  return (
-    <text x={x} y={y} fill="#1e293b" textAnchor="middle" dominantBaseline="central"
-      fontSize={12} fontWeight={700}>
-      {pct}%
-    </text>
-  );
+    if (
+      cx === undefined || cy === undefined ||
+      midAngle === undefined ||
+      innerRadius === undefined || outerRadius === undefined ||
+      value === undefined || grandTotal === 0
+    ) return null;
+
+    const pct = Math.round(((value as number) / grandTotal) * 100);
+    if (pct < 4) return null; // skip tiny slices to avoid overlap
+
+    const RADIAN = Math.PI / 180;
+    const r = (innerRadius as number) + ((outerRadius as number) - (innerRadius as number)) * 0.5 + 20;
+    const x = (cx as number) + r * Math.cos(-(midAngle as number) * RADIAN);
+    const y = (cy as number) + r * Math.sin(-(midAngle as number) * RADIAN);
+
+    return (
+      <text
+        x={x} y={y}
+        fill="#1e293b"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={12}
+        fontWeight={700}
+      >
+        {pct}%
+      </text>
+    );
+  };
 }
 
-// Tooltip content
-function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number; payload: CategoryData }> }) {
+function CustomTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; payload: CategoryData }>;
+}) {
   if (!active || !payload?.length) return null;
   const item = payload[0];
   return (
@@ -79,10 +91,10 @@ export default function CategoryPieChart({ data }: Props) {
   }
 
   const total = data.reduce((s, d) => s + d.total, 0);
+  const renderLabel = makeLabelRenderer(total);
 
   return (
     <div className="space-y-4">
-      {/* Donut chart */}
       <ResponsiveContainer width="100%" height={300}>
         <PieChart>
           <Pie
@@ -95,7 +107,7 @@ export default function CategoryPieChart({ data }: Props) {
             dataKey="total"
             nameKey="category"
             labelLine={false}
-            label={renderCustomLabel}
+            label={renderLabel}
           >
             {data.map((entry) => (
               <Cell
@@ -115,7 +127,7 @@ export default function CategoryPieChart({ data }: Props) {
         </PieChart>
       </ResponsiveContainer>
 
-      {/* Category breakdown list */}
+      {/* Breakdown list */}
       <div className="divide-y divide-slate-100 rounded-xl border border-slate-100">
         {data.map((item) => (
           <div key={item.category} className="flex items-center gap-3 px-4 py-3">
